@@ -4,6 +4,7 @@
 
 - run-inspection.ps1: single-instance MVP inspector
 - run-batch-inspection.ps1: multi-instance batch runner with summary report
+- generate-remediation.ps1: generate prioritized remediation plan from an inspection JSON
 
 ## Quick start
 
@@ -31,10 +32,12 @@
 2. Run:
    - .\\run-batch-inspection.ps1 -InstancesPath .\\instances.example.json
    - .\\run-batch-inspection.ps1 -InstancesPath .\\instances.example.json -SummaryFormats "json,html,md"
+   - .\\run-batch-inspection.ps1 -InstancesPath .\\instances.example.json -GenerateRemediationPerInstance $true
 3. Review batch output:
    - .\\output\\batch-<timestamp>\\batch-summary.json
    - .\\output\\batch-<timestamp>\\batch-summary.html
    - Includes risk ranking, top-risk list, and suggested remediation actions
+   - Per-instance remediation reports (md/html) under each instance output folder
 
 ## Report formats
 

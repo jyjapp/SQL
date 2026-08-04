@@ -2,6 +2,7 @@ param(
   [string]$InstancesPath = ".\\instances.example.json",
   [string]$OutputRoot = ".\\output",
   [string]$SummaryFormats = "json,html",
+  [bool]$GenerateRemediationPerInstance = $true,
   [string]$ThresholdPath = "..\\skill\\rules\\thresholds.json"
 )
 
@@ -91,6 +92,8 @@ $singleScript = Join-Path $PSScriptRoot "run-inspection.ps1"
 if (-not (Test-Path $singleScript)) {
   throw "Single runner not found: $singleScript"
 }
+
+$remediationScript = Join-Path $PSScriptRoot "generate-remediation.ps1"
 
 function Get-MetricStatusMap {
   param([object[]]$Metrics)
@@ -194,6 +197,21 @@ foreach ($instance in $instancesConfig.instances) {
     $actions = Get-Recommendations -Metrics $result.metrics
     $riskIndex = Get-RiskIndex -Critical ([int]$result.summary.critical) -Warning ([int]$result.summary.warning) -ProbeErrors ([int]$result.summary.probeErrors)
 
+    $remediationMdPath = ""
+    $remediationHtmlPath = ""
+    if ($GenerateRemediationPerInstance -and (Test-Path $remediationScript)) {
+      try {
+        $remOutput = & $remediationScript -InspectionJsonPath $latestJson.FullName -OutputDir $instanceOutput
+        foreach ($line in @($remOutput)) {
+          $text = [string]$line
+          if ($text.StartsWith("MD: ")) { $remediationMdPath = $text.Substring(4).Trim() }
+          if ($text.StartsWith("HTML: ")) { $remediationHtmlPath = $text.Substring(6).Trim() }
+        }
+      }
+      catch {
+      }
+    }
+
     $summary.Add([ordered]@{
       instance = $instanceName
       server = [string]$instance.server
@@ -208,6 +226,8 @@ foreach ($instance in $instancesConfig.instances) {
       warningMetrics = $warningMetrics
       suggestedActions = $actions
       jsonPath = $latestJson.FullName
+      remediationMdPath = $remediationMdPath
+      remediationHtmlPath = $remediationHtmlPath
     })
   }
   catch {
@@ -225,6 +245,8 @@ foreach ($instance in $instancesConfig.instances) {
       warningMetrics = @()
       suggestedActions = @("Fix connectivity/authentication first, then rerun inspection.")
       jsonPath = ""
+      remediationMdPath = ""
+      remediationHtmlPath = ""
       error = $_.Exception.Message
     })
   }
@@ -284,7 +306,15 @@ $rows = $sortedSummary | ForEach-Object {
     $actionText = "-"
   }
 
-  "<tr><td>$rank</td><td>$([System.Net.WebUtility]::HtmlEncode([string]$_.instance))</td><td>$([System.Net.WebUtility]::HtmlEncode([string]$_.server))</td><td><span class='badge $statusClass'>$([System.Net.WebUtility]::HtmlEncode([string]$_.overallStatus))</span></td><td>$($_.riskIndex)</td><td>$($_.healthScore)</td><td>$($_.critical)</td><td>$($_.warning)</td><td>$($_.good)</td><td>$($_.probeErrors)</td><td class='mono'>$criticalMetricText</td><td class='mono'>$actionText</td><td class='mono'>$errorText</td></tr>"
+  $remediationText = "-"
+  if (-not [string]::IsNullOrWhiteSpace([string]$_.remediationMdPath) -or -not [string]::IsNullOrWhiteSpace([string]$_.remediationHtmlPath)) {
+    $parts = @()
+    if (-not [string]::IsNullOrWhiteSpace([string]$_.remediationMdPath)) { $parts += ("MD: " + [System.Net.WebUtility]::HtmlEncode([string]$_.remediationMdPath)) }
+    if (-not [string]::IsNullOrWhiteSpace([string]$_.remediationHtmlPath)) { $parts += ("HTML: " + [System.Net.WebUtility]::HtmlEncode([string]$_.remediationHtmlPath)) }
+    $remediationText = ($parts -join "<br>")
+  }
+
+  "<tr><td>$rank</td><td>$([System.Net.WebUtility]::HtmlEncode([string]$_.instance))</td><td>$([System.Net.WebUtility]::HtmlEncode([string]$_.server))</td><td><span class='badge $statusClass'>$([System.Net.WebUtility]::HtmlEncode([string]$_.overallStatus))</span></td><td>$($_.riskIndex)</td><td>$($_.healthScore)</td><td>$($_.critical)</td><td>$($_.warning)</td><td>$($_.good)</td><td>$($_.probeErrors)</td><td class='mono'>$criticalMetricText</td><td class='mono'>$actionText</td><td class='mono'>$remediationText</td><td class='mono'>$errorText</td></tr>"
 }
 
 $topRiskRows = $topRisks | ForEach-Object {
@@ -334,7 +364,7 @@ $html = @"
   <h2>Full Ranking</h2>
   <table>
     <thead>
-      <tr><th>Rank</th><th>Instance</th><th>Server</th><th>Status</th><th>Risk</th><th>Score</th><th>Critical</th><th>Warning</th><th>Good</th><th>Probe Errors</th><th>Critical Metrics</th><th>Suggested Actions</th><th>Error</th></tr>
+      <tr><th>Rank</th><th>Instance</th><th>Server</th><th>Status</th><th>Risk</th><th>Score</th><th>Critical</th><th>Warning</th><th>Good</th><th>Probe Errors</th><th>Critical Metrics</th><th>Suggested Actions</th><th>Remediation Reports</th><th>Error</th></tr>
     </thead>
     <tbody>
       $($rows -join "`n")
