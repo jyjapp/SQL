@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "statusLevels": ["Good", "Warning", "Critical"],
+  "rules": {
+    "ple_seconds": {
+      "warningBelow": 600,
+      "criticalBelow": 300,
+      "unit": "seconds",
+      "description": "Page life expectancy"
+    },
+    "buffer_cache_hit_ratio": {
+      "warningBelow": 95,
+      "criticalBelow": 90,
+      "unit": "percent",
+      "description": "Buffer cache hit ratio"
+    },
+    "data_disk_used_percent": {
+      "warningAbove": 80,
+      "criticalAbove": 90,
+      "unit": "percent",
+      "description": "Data file volume usage"
+    },
+    "log_used_percent": {
+      "warningAbove": 70,
+      "criticalAbove": 85,
+      "unit": "percent",
+      "description": "Transaction log usage"
+    },
+    "failed_jobs_24h": {
+      "warningAbove": 0,
+      "criticalAbove": 3,
+      "unit": "count",
+      "description": "Failed SQL Agent jobs in last 24h"
+    },
+    "blocking_sessions": {
+      "warningAbove": 0,
+      "criticalAbove": 5,
+      "unit": "count",
+      "description": "Current blocking sessions"
+    },
+    "last_full_backup_age_hours": {
+      "warningAbove": 48,
+      "criticalAbove": 72,
+      "unit": "hours",
+      "description": "Hours since last full backup"
+    }
+  }
+}

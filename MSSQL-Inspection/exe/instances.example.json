@@ -1,0 +1,14 @@
+{
+  "instances": [
+    {
+      "name": "prod-sql-01",
+      "server": "127.0.0.1",
+      "database": "master",
+      "authMode": "SqlAuth",
+      "username": "sa",
+      "password": "CHANGE_ME",
+      "port": 1433,
+      "timeoutSeconds": 15
+    }
+  ]
+}
