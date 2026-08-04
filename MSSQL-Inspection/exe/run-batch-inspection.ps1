@@ -89,6 +89,9 @@ foreach ($instance in $instancesConfig.instances) {
       Database = if ([string]::IsNullOrWhiteSpace([string]$instance.database)) { "master" } else { [string]$instance.database }
       Port = if ($null -eq $instance.port) { 1433 } else { [int]$instance.port }
       TimeoutSeconds = if ($null -eq $instance.timeoutSeconds) { 15 } else { [int]$instance.timeoutSeconds }
+      ConnectionProvider = if ([string]::IsNullOrWhiteSpace([string]$instance.connectionProvider)) { "SqlClient" } else { [string]$instance.connectionProvider }
+      TdsVersion = if ([string]::IsNullOrWhiteSpace([string]$instance.tdsVersion)) { "" } else { [string]$instance.tdsVersion }
+      OdbcDriver = if ([string]::IsNullOrWhiteSpace([string]$instance.odbcDriver)) { "ODBC Driver 18 for SQL Server" } else { [string]$instance.odbcDriver }
       ThresholdPath = $ThresholdPath
       OutputDir = $instanceOutput
     }

@@ -5,6 +5,10 @@ param(
   [string]$Password = "",
   [int]$Port = 1433,
   [int]$TimeoutSeconds = 15,
+  [ValidateSet("SqlClient", "Odbc")]
+  [string]$ConnectionProvider = "SqlClient",
+  [string]$TdsVersion = "",
+  [string]$OdbcDriver = "ODBC Driver 18 for SQL Server",
   [string]$ThresholdPath = "..\\skill\\rules\\thresholds.json",
   [string]$OutputDir = ".\\output"
 )
@@ -33,8 +37,28 @@ function Get-ConnectionString {
     [string]$Database,
     [string]$Username,
     [string]$Password,
-    [int]$Port
+    [int]$Port,
+    [string]$ConnectionProvider,
+    [string]$TdsVersion,
+    [string]$OdbcDriver
   )
+
+  if ($ConnectionProvider -eq "Odbc") {
+    $authPart = ""
+    if ([string]::IsNullOrWhiteSpace($Username)) {
+      $authPart = "Trusted_Connection=Yes;"
+    }
+    else {
+      $authPart = "UID=$Username;PWD=$Password;"
+    }
+
+    $tdsPart = ""
+    if (-not [string]::IsNullOrWhiteSpace($TdsVersion)) {
+      $tdsPart = "TDS_Version=$TdsVersion;"
+    }
+
+    return "Driver={$OdbcDriver};Server=$Server;Port=$Port;Database=$Database;$authPart$tdsPartEncrypt=No;TrustServerCertificate=Yes;"
+  }
 
   if ([string]::IsNullOrWhiteSpace($Username)) {
     return "Server=$Server,$Port;Database=$Database;Integrated Security=True;TrustServerCertificate=True;"
@@ -43,9 +67,22 @@ function Get-ConnectionString {
   return "Server=$Server,$Port;Database=$Database;User ID=$Username;Password=$Password;TrustServerCertificate=True;"
 }
 
+function New-DbConnection {
+  param(
+    [string]$ConnectionString,
+    [string]$ConnectionProvider
+  )
+
+  if ($ConnectionProvider -eq "Odbc") {
+    return (New-Object System.Data.Odbc.OdbcConnection($ConnectionString))
+  }
+
+  return (New-Object System.Data.SqlClient.SqlConnection($ConnectionString))
+}
+
 function Invoke-Scalar {
   param(
-    [System.Data.SqlClient.SqlConnection]$Connection,
+    [System.Data.IDbConnection]$Connection,
     [string]$Sql,
     [int]$TimeoutSeconds
   )
@@ -59,7 +96,7 @@ function Invoke-Scalar {
 
 function Invoke-DataTable {
   param(
-    [System.Data.SqlClient.SqlConnection]$Connection,
+    [System.Data.IDbConnection]$Connection,
     [string]$Sql,
     [int]$TimeoutSeconds
   )
@@ -67,9 +104,14 @@ function Invoke-DataTable {
   $cmd = $Connection.CreateCommand()
   $cmd.CommandText = $Sql
   $cmd.CommandTimeout = $TimeoutSeconds
-  $adapter = New-Object System.Data.SqlClient.SqlDataAdapter($cmd)
   $table = New-Object System.Data.DataTable
-  [void]$adapter.Fill($table)
+  $reader = $cmd.ExecuteReader()
+  try {
+    $table.Load($reader)
+  }
+  finally {
+    $reader.Close()
+  }
   return $table
 }
 
@@ -135,7 +177,7 @@ function New-Metric {
 
 function Invoke-SafeScalarProbe {
   param(
-    [System.Data.SqlClient.SqlConnection]$Connection,
+    [System.Data.IDbConnection]$Connection,
     [string]$ProbeName,
     [string]$Sql,
     [int]$TimeoutSeconds,
@@ -157,7 +199,7 @@ function Invoke-SafeScalarProbe {
 
 function Invoke-SafeTableProbe {
   param(
-    [System.Data.SqlClient.SqlConnection]$Connection,
+    [System.Data.IDbConnection]$Connection,
     [string]$ProbeName,
     [string]$Sql,
     [int]$TimeoutSeconds,
@@ -191,8 +233,8 @@ $thresholdJson.rules.PSObject.Properties | ForEach-Object {
   $_.Value.PSObject.Properties | ForEach-Object { $ruleMap[$name][$_.Name] = $_.Value }
 }
 
-$connString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port
-$conn = New-Object System.Data.SqlClient.SqlConnection($connString)
+$connString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider $ConnectionProvider -TdsVersion $TdsVersion -OdbcDriver $OdbcDriver
+$conn = New-DbConnection -ConnectionString $connString -ConnectionProvider $ConnectionProvider
 $conn.Open()
 
 try {
@@ -632,6 +674,11 @@ OPTION (RECOMPILE);
     server = $Server
     database = $Database
     collectedAt = (Get-Date).ToString("s")
+    connection = [ordered]@{
+      provider = $ConnectionProvider
+      tdsVersion = if ([string]::IsNullOrWhiteSpace($TdsVersion)) { $null } else { $TdsVersion }
+      port = $Port
+    }
     summary = [ordered]@{
       overallStatus = $overallStatus
       healthScore = $healthScore

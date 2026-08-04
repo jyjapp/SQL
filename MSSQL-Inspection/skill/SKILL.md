@@ -23,6 +23,7 @@ Build a lightweight, pluggable SQL Server inspection skill that collects health 
 - Support Windows auth and SQL auth
 - Batch mode from instance configuration file
 - Query timeout and fail-fast controls
+- Dual provider strategy: SqlClient (default) and Odbc with explicit TDS version override
 
 ### Module B: T-SQL probe library
 

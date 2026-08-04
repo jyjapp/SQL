@@ -12,6 +12,8 @@
    - .\\run-inspection.ps1 -Server 10.0.0.10 -Database master
 3. Run with SQL auth:
    - .\\run-inspection.ps1 -Server 10.0.0.10 -Database master -Username sa -Password "your_password"
+4. Run with explicit TDS for legacy targets (ODBC mode):
+   - .\\run-inspection.ps1 -Server 10.0.0.55 -Database master -Username sa -Password "your_password" -ConnectionProvider Odbc -TdsVersion 7.1
 
 ## Output
 
@@ -46,3 +48,9 @@
 - This MVP focuses on lightweight online checks.
 - Heavy checks (CHECKDB and deep index analysis) should be scheduled off-peak.
 - Some probes require VIEW SERVER STATE and access to msdb history tables.
+- SqlClient mode uses native protocol negotiation and does not expose an explicit TDS setting.
+- For legacy instances or protocol edge cases, use Odbc mode and set tdsVersion per instance.
+- Suggested TDS hints:
+   - SQL Server 2008/2008 R2: 7.1
+   - SQL Server 2012/2014: 7.3
+   - SQL Server 2016+: 7.4 (or keep empty and let driver negotiate)

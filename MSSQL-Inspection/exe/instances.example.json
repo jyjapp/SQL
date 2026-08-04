@@ -5,6 +5,9 @@
       "server": "127.0.0.1",
       "database": "master",
       "authMode": "Windows",
+      "connectionProvider": "SqlClient",
+      "tdsVersion": "",
+      "odbcDriver": "ODBC Driver 18 for SQL Server",
       "username": "",
       "password": "",
       "port": 1433,
@@ -15,10 +18,26 @@
       "server": "10.0.0.25",
       "database": "master",
       "authMode": "SqlAuth",
+      "connectionProvider": "Odbc",
+      "tdsVersion": "7.3",
+      "odbcDriver": "ODBC Driver 18 for SQL Server",
       "username": "sa",
       "password": "CHANGE_ME",
       "port": 1433,
       "timeoutSeconds": 15
+    },
+    {
+      "name": "legacy-sql-2008r2",
+      "server": "10.0.0.55",
+      "database": "master",
+      "authMode": "SqlAuth",
+      "connectionProvider": "Odbc",
+      "tdsVersion": "7.1",
+      "odbcDriver": "ODBC Driver 18 for SQL Server",
+      "username": "sa",
+      "password": "CHANGE_ME",
+      "port": 1433,
+      "timeoutSeconds": 20
     }
   ]
 }
