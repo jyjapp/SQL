@@ -96,6 +96,48 @@ function Convert-HtmlToOffice {
   return $result
 }
 
+function Get-TableRows {
+  param([object]$Table)
+
+  if ($null -eq $Table) {
+    return @()
+  }
+
+  if ($Table -is [System.Data.DataTable]) {
+    return ,$Table.Rows
+  }
+
+  if ($Table.PSObject.Properties.Name -contains "Rows") {
+    return ,$Table.Rows
+  }
+
+  return @()
+}
+
+function Get-FirstTableValue {
+  param(
+    [object]$Table,
+    [string]$ColumnName
+  )
+
+  $rows = @(Get-TableRows -Table $Table)
+  if ($rows.Length -eq 0) {
+    return $null
+  }
+
+  $firstRow = $rows[0]
+  try {
+    $value = $firstRow[$ColumnName]
+    if ($value -eq [System.DBNull]::Value) {
+      return $null
+    }
+    return $value
+  }
+  catch {
+    return $null
+  }
+}
+
 function Convert-ToNumericOrNull {
   param([object]$Value)
 
@@ -137,7 +179,7 @@ function Get-ConnectionString {
       $tdsPart = "TDS_Version=$TdsVersion;"
     }
 
-    return "Driver={$OdbcDriver};Server=$Server;Port=$Port;Database=$Database;$authPart$tdsPartEncrypt=No;TrustServerCertificate=Yes;"
+    return "Driver={$OdbcDriver};Server=$Server;Port=$Port;Database=$Database;$authPart${tdsPart}Encrypt=No;TrustServerCertificate=Yes;"
   }
 
   if ([string]::IsNullOrWhiteSpace($Username)) {
@@ -511,8 +553,9 @@ OPTION (RECOMPILE);
 "@
 
   $backupAgeHours = $null
-  if ($lastFullBackup.Rows.Count -gt 0 -and $lastFullBackup.Rows[0]["last_full_backup_time"] -ne [System.DBNull]::Value) {
-    $lastTime = [datetime]$lastFullBackup.Rows[0]["last_full_backup_time"]
+  $lastBackupRaw = Get-FirstTableValue -Table $lastFullBackup -ColumnName "last_full_backup_time"
+  if ($null -ne $lastBackupRaw) {
+    $lastTime = [datetime]$lastBackupRaw
     $backupAgeHours = [Math]::Round(((Get-Date) - $lastTime).TotalHours, 2)
   }
   $metrics.Add((New-Metric -MetricKey "last_full_backup_age_hours" -Category "data_safety" -Value $backupAgeHours -Unit "hours" -Rule $ruleMap["last_full_backup_age_hours"] -SourceProbe "msdb.backupset"))
@@ -540,8 +583,9 @@ FROM sys.dm_db_log_space_usage
 OPTION (RECOMPILE);
 "@
   $avgLog = $null
-  if ($logUsage.Rows.Count -gt 0 -and $logUsage.Rows[0]["avg_log_used_percent"] -ne [System.DBNull]::Value) {
-    $avgLog = [double]$logUsage.Rows[0]["avg_log_used_percent"]
+  $avgLogRaw = Get-FirstTableValue -Table $logUsage -ColumnName "avg_log_used_percent"
+  if ($null -ne $avgLogRaw) {
+    $avgLog = [double]$avgLogRaw
   }
   $metrics.Add((New-Metric -MetricKey "log_used_percent" -Category "io_disk" -Value $avgLog -Unit "percent" -Rule $ruleMap["log_used_percent"] -SourceProbe "dm_db_log_space_usage"))
 
@@ -792,7 +836,7 @@ OPTION (RECOMPILE);
   }
 
   $failedJobsDetailRows = @()
-  foreach ($row in $failedJobsDetails.Rows) {
+  foreach ($row in (Get-TableRows -Table $failedJobsDetails)) {
     $failedJobsDetailRows += [ordered]@{
       job_name = [string]$row["job_name"]
       run_time = [string]$row["run_time"]
@@ -801,7 +845,7 @@ OPTION (RECOMPILE);
   }
 
   $longRunningDetailRows = @()
-  foreach ($row in $longRunningTop.Rows) {
+  foreach ($row in (Get-TableRows -Table $longRunningTop)) {
     $longRunningDetailRows += [ordered]@{
       session_id = [int]$row["session_id"]
       database_name = [string]$row["database_name"]
@@ -813,7 +857,7 @@ OPTION (RECOMPILE);
   }
 
   $backupAgeDetailRows = @()
-  foreach ($row in $backupAgeByDb.Rows) {
+  foreach ($row in (Get-TableRows -Table $backupAgeByDb)) {
     $backupAgeDetailRows += [ordered]@{
       database_name = [string]$row["database_name"]
       last_full_backup = if ($row["last_full_backup"] -eq [System.DBNull]::Value) { $null } else { [string]$row["last_full_backup"] }
@@ -822,7 +866,7 @@ OPTION (RECOMPILE);
   }
 
   $sysadminDetailRows = @()
-  foreach ($row in $sysadminLoginDetails.Rows) {
+  foreach ($row in (Get-TableRows -Table $sysadminLoginDetails)) {
     $sysadminDetailRows += [ordered]@{
       name = [string]$row["name"]
       type_desc = [string]$row["type_desc"]
@@ -832,7 +876,7 @@ OPTION (RECOMPILE);
   }
 
   $weakPolicyDetailRows = @()
-  foreach ($row in $weakPolicyLoginDetails.Rows) {
+  foreach ($row in (Get-TableRows -Table $weakPolicyLoginDetails)) {
     $weakPolicyDetailRows += [ordered]@{
       name = [string]$row["name"]
       is_policy_checked = [string]$row["is_policy_checked"]
@@ -843,7 +887,7 @@ OPTION (RECOMPILE);
   }
 
   $recentLoginsDetailRows = @()
-  foreach ($row in $recentLoginsDetails.Rows) {
+  foreach ($row in (Get-TableRows -Table $recentLoginsDetails)) {
     $recentLoginsDetailRows += [ordered]@{
       name = [string]$row["name"]
       type_desc = [string]$row["type_desc"]
@@ -853,7 +897,7 @@ OPTION (RECOMPILE);
   }
 
   $recentDbUsersDetailRows = @()
-  foreach ($row in $recentDbUsersDetails.Rows) {
+  foreach ($row in (Get-TableRows -Table $recentDbUsersDetails)) {
     $recentDbUsersDetailRows += [ordered]@{
       database_name = [string]$row["database_name"]
       user_name = [string]$row["user_name"]
@@ -916,44 +960,44 @@ OPTION (RECOMPILE);
     "<tr><td>$(Escape-Html -Text $_.metricKey)</td><td>$(Escape-Html -Text $_.category)</td><td>$(Escape-Html -Text ([string]$_.value))</td><td>$(Escape-Html -Text $_.unit)</td><td><span class='badge $statusClass'>$(Escape-Html -Text $_.status)</span></td></tr>"
   }
 
-  $topQueryRows = $longRunningDetailRows | ForEach-Object {
+  $topQueryRows = @($longRunningDetailRows | ForEach-Object {
     "<tr><td>$($_.session_id)</td><td>$(Escape-Html -Text $_.database_name)</td><td>$($_.elapsed_seconds)</td><td>$(Escape-Html -Text $_.wait_type)</td><td>$(Escape-Html -Text $_.query_text)</td></tr>"
-  }
+  })
 
-  if ($topQueryRows.Count -eq 0) {
+  if ($topQueryRows.Length -eq 0) {
     $topQueryRows = @("<tr><td colspan='5'>No active long-running queries.</td></tr>")
   }
 
-  $jobRows = $failedJobsDetailRows | ForEach-Object {
+  $jobRows = @($failedJobsDetailRows | ForEach-Object {
     "<tr><td>$(Escape-Html -Text $_.job_name)</td><td>$(Escape-Html -Text $_.run_time)</td><td>$(Escape-Html -Text $_.message)</td></tr>"
-  }
+  })
 
-  if ($jobRows.Count -eq 0) {
+  if ($jobRows.Length -eq 0) {
     $jobRows = @("<tr><td colspan='3'>No failed jobs in last 24h.</td></tr>")
   }
   
-  $sysadminRows = $sysadminDetailRows | ForEach-Object {
+  $sysadminRows = @($sysadminDetailRows | ForEach-Object {
     "<tr><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.is_disabled)</td><td>$(Escape-Html -Text $_.create_date)</td></tr>"
-  }
-  if ($sysadminRows.Count -eq 0) {
+  })
+  if ($sysadminRows.Length -eq 0) {
     $sysadminRows = @("<tr><td colspan='4'>No sysadmin principals found.</td></tr>")
   }
   
-  $weakPolicyRows = $weakPolicyDetailRows | ForEach-Object {
+  $weakPolicyRows = @($weakPolicyDetailRows | ForEach-Object {
     "<tr><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.is_policy_checked)</td><td>$(Escape-Html -Text $_.is_expiration_checked)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.modify_date)</td></tr>"
-  }
-  if ($weakPolicyRows.Count -eq 0) {
+  })
+  if ($weakPolicyRows.Length -eq 0) {
     $weakPolicyRows = @("<tr><td colspan='5'>No weak-policy SQL logins detected.</td></tr>")
   }
   
-  $recentIdentityRows = $recentLoginsDetailRows | ForEach-Object {
+  $recentIdentityRows = @($recentLoginsDetailRows | ForEach-Object {
     "<tr><td>Server Login</td><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.default_database_name)</td></tr>"
-  }
-  $recentDbIdentityRows = $recentDbUsersDetailRows | ForEach-Object {
+  })
+  $recentDbIdentityRows = @($recentDbUsersDetailRows | ForEach-Object {
     "<tr><td>DB User</td><td>$(Escape-Html -Text $_.user_name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.database_name)</td></tr>"
-  }
+  })
   $recentIdentityRows = @($recentIdentityRows) + @($recentDbIdentityRows)
-  if ($recentIdentityRows.Count -eq 0) {
+  if ($recentIdentityRows.Length -eq 0) {
     $recentIdentityRows = @("<tr><td colspan='5'>No new logins/users in last 90 days.</td></tr>")
   }
 
