@@ -14,6 +14,8 @@
    - .\\run-inspection.ps1 -Server 10.0.0.10 -Database master -Username sa -Password "your_password"
 4. Run with explicit TDS for legacy targets (ODBC mode):
    - .\\run-inspection.ps1 -Server 10.0.0.55 -Database master -Username sa -Password "your_password" -ConnectionProvider Odbc -TdsVersion 7.1
+5. Run with automatic fallback (recommended for mixed-version estates):
+   - .\\run-inspection.ps1 -Server 10.0.0.55 -Database master -Username sa -Password "your_password" -ConnectionProvider SqlClient -EnableFallback $true -FallbackTdsVersions "7.4,7.3,7.2,7.1,7.0"
 
 ## Output
 
@@ -50,6 +52,7 @@
 - Some probes require VIEW SERVER STATE and access to msdb history tables.
 - SqlClient mode uses native protocol negotiation and does not expose an explicit TDS setting.
 - For legacy instances or protocol edge cases, use Odbc mode and set tdsVersion per instance.
+- If initial connection fails, fallback mode retries ODBC with ordered TDS candidates until one succeeds.
 - Suggested TDS hints:
    - SQL Server 2008/2008 R2: 7.1
    - SQL Server 2012/2014: 7.3

@@ -9,6 +9,8 @@ param(
   [string]$ConnectionProvider = "SqlClient",
   [string]$TdsVersion = "",
   [string]$OdbcDriver = "ODBC Driver 18 for SQL Server",
+  [bool]$EnableFallback = $true,
+  [string]$FallbackTdsVersions = "7.4,7.3,7.2,7.1,7.0",
   [string]$ThresholdPath = "..\\skill\\rules\\thresholds.json",
   [string]$OutputDir = ".\\output"
 )
@@ -78,6 +80,93 @@ function New-DbConnection {
   }
 
   return (New-Object System.Data.SqlClient.SqlConnection($ConnectionString))
+}
+
+function Get-TdsFallbackList {
+  param(
+    [string]$FallbackTdsVersions,
+    [string]$PreferredTdsVersion
+  )
+
+  $list = New-Object System.Collections.Generic.List[string]
+
+  if (-not [string]::IsNullOrWhiteSpace($PreferredTdsVersion)) {
+    $list.Add($PreferredTdsVersion.Trim())
+  }
+
+  foreach ($item in ($FallbackTdsVersions -split ',')) {
+    $tds = $item.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($tds) -and -not $list.Contains($tds)) {
+      $list.Add($tds)
+    }
+  }
+
+  return $list
+}
+
+function Get-ConnectionAttempts {
+  param(
+    [string]$Server,
+    [string]$Database,
+    [string]$Username,
+    [string]$Password,
+    [int]$Port,
+    [string]$ConnectionProvider,
+    [string]$TdsVersion,
+    [string]$OdbcDriver,
+    [bool]$EnableFallback,
+    [string]$FallbackTdsVersions
+  )
+
+  $attempts = New-Object System.Collections.Generic.List[object]
+  $tdsCandidates = Get-TdsFallbackList -FallbackTdsVersions $FallbackTdsVersions -PreferredTdsVersion $TdsVersion
+
+  if ($ConnectionProvider -eq "SqlClient") {
+    $attempts.Add([ordered]@{
+      provider = "SqlClient"
+      tdsVersion = $null
+      connectionString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider "SqlClient" -TdsVersion "" -OdbcDriver $OdbcDriver
+      label = "SqlClient(auto-negotiation)"
+    })
+
+    if ($EnableFallback) {
+      foreach ($tds in $tdsCandidates) {
+        $attempts.Add([ordered]@{
+          provider = "Odbc"
+          tdsVersion = $tds
+          connectionString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider "Odbc" -TdsVersion $tds -OdbcDriver $OdbcDriver
+          label = "Odbc(TDS=$tds)"
+        })
+      }
+    }
+
+    return $attempts
+  }
+
+  if ($tdsCandidates.Count -eq 0) {
+    $tdsCandidates.Add("")
+  }
+
+  $firstTds = $tdsCandidates[0]
+  $attempts.Add([ordered]@{
+    provider = "Odbc"
+    tdsVersion = if ([string]::IsNullOrWhiteSpace($firstTds)) { $null } else { $firstTds }
+    connectionString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider "Odbc" -TdsVersion $firstTds -OdbcDriver $OdbcDriver
+    label = if ([string]::IsNullOrWhiteSpace($firstTds)) { "Odbc(auto-negotiation)" } else { "Odbc(TDS=$firstTds)" }
+  })
+
+  if ($EnableFallback) {
+    foreach ($tds in $tdsCandidates | Select-Object -Skip 1) {
+      $attempts.Add([ordered]@{
+        provider = "Odbc"
+        tdsVersion = $tds
+        connectionString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider "Odbc" -TdsVersion $tds -OdbcDriver $OdbcDriver
+        label = "Odbc(TDS=$tds)"
+      })
+    }
+  }
+
+  return $attempts
 }
 
 function Invoke-Scalar {
@@ -233,9 +322,35 @@ $thresholdJson.rules.PSObject.Properties | ForEach-Object {
   $_.Value.PSObject.Properties | ForEach-Object { $ruleMap[$name][$_.Name] = $_.Value }
 }
 
-$connString = Get-ConnectionString -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider $ConnectionProvider -TdsVersion $TdsVersion -OdbcDriver $OdbcDriver
-$conn = New-DbConnection -ConnectionString $connString -ConnectionProvider $ConnectionProvider
-$conn.Open()
+$attemptTrace = New-Object System.Collections.Generic.List[object]
+$attempts = Get-ConnectionAttempts -Server $Server -Database $Database -Username $Username -Password $Password -Port $Port -ConnectionProvider $ConnectionProvider -TdsVersion $TdsVersion -OdbcDriver $OdbcDriver -EnableFallback $EnableFallback -FallbackTdsVersions $FallbackTdsVersions
+
+$conn = $null
+$activeProvider = $null
+$activeTdsVersion = $null
+
+foreach ($attempt in $attempts) {
+  try {
+    $conn = New-DbConnection -ConnectionString $attempt.connectionString -ConnectionProvider $attempt.provider
+    $conn.Open()
+    $activeProvider = $attempt.provider
+    $activeTdsVersion = $attempt.tdsVersion
+    $attemptTrace.Add([ordered]@{ label = $attempt.label; success = $true; message = "connected" })
+    break
+  }
+  catch {
+    $attemptTrace.Add([ordered]@{ label = $attempt.label; success = $false; message = $_.Exception.Message })
+    if ($null -ne $conn) {
+      try { $conn.Dispose() } catch {}
+      $conn = $null
+    }
+  }
+}
+
+if ($null -eq $conn) {
+  $traceText = ($attemptTrace | ForEach-Object { "$($_.label): $($_.message)" }) -join " | "
+  throw "Unable to connect with all attempts. $traceText"
+}
 
 try {
   $metrics = New-Object System.Collections.Generic.List[object]
@@ -675,8 +790,12 @@ OPTION (RECOMPILE);
     database = $Database
     collectedAt = (Get-Date).ToString("s")
     connection = [ordered]@{
-      provider = $ConnectionProvider
-      tdsVersion = if ([string]::IsNullOrWhiteSpace($TdsVersion)) { $null } else { $TdsVersion }
+      requestedProvider = $ConnectionProvider
+      requestedTdsVersion = if ([string]::IsNullOrWhiteSpace($TdsVersion)) { $null } else { $TdsVersion }
+      activeProvider = $activeProvider
+      activeTdsVersion = $activeTdsVersion
+      fallbackEnabled = $EnableFallback
+      attempts = $attemptTrace
       port = $Port
     }
     summary = [ordered]@{
@@ -886,5 +1005,14 @@ OPTION (RECOMPILE);
   Write-Output "HTML: $htmlPath"
 }
 finally {
-  $conn.Close()
+  if ($null -ne $conn) {
+    try {
+      if ($conn.State -ne [System.Data.ConnectionState]::Closed) {
+        $conn.Close()
+      }
+    }
+    catch {
+    }
+    try { $conn.Dispose() } catch {}
+  }
 }

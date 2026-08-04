@@ -92,6 +92,8 @@ foreach ($instance in $instancesConfig.instances) {
       ConnectionProvider = if ([string]::IsNullOrWhiteSpace([string]$instance.connectionProvider)) { "SqlClient" } else { [string]$instance.connectionProvider }
       TdsVersion = if ([string]::IsNullOrWhiteSpace([string]$instance.tdsVersion)) { "" } else { [string]$instance.tdsVersion }
       OdbcDriver = if ([string]::IsNullOrWhiteSpace([string]$instance.odbcDriver)) { "ODBC Driver 18 for SQL Server" } else { [string]$instance.odbcDriver }
+      EnableFallback = if ($null -eq $instance.enableFallback) { $true } else { [bool]$instance.enableFallback }
+      FallbackTdsVersions = if ([string]::IsNullOrWhiteSpace([string]$instance.fallbackTdsVersions)) { "7.4,7.3,7.2,7.1,7.0" } else { [string]$instance.fallbackTdsVersions }
       ThresholdPath = $ThresholdPath
       OutputDir = $instanceOutput
     }
