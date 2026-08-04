@@ -1,11 +1,79 @@
 param(
   [string]$InstancesPath = ".\\instances.example.json",
   [string]$OutputRoot = ".\\output",
+  [string]$SummaryFormats = "json,html",
   [string]$ThresholdPath = "..\\skill\\rules\\thresholds.json"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Normalize-ReportFormats {
+  param([string]$ReportFormats)
+
+  $allowed = @("json", "html", "md", "docx", "pdf")
+  $normalized = New-Object System.Collections.Generic.List[string]
+  foreach ($token in ($ReportFormats -split ',')) {
+    $fmt = $token.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($fmt)) {
+      continue
+    }
+    if ($allowed -contains $fmt -and -not $normalized.Contains($fmt)) {
+      $normalized.Add($fmt)
+    }
+  }
+  if ($normalized.Count -eq 0) {
+    $normalized.Add("json")
+    $normalized.Add("html")
+  }
+  return $normalized
+}
+
+function Convert-HtmlToOffice {
+  param(
+    [string]$HtmlPath,
+    [string]$DocxPath,
+    [string]$PdfPath,
+    [bool]$ExportDocx,
+    [bool]$ExportPdf
+  )
+
+  $result = [ordered]@{ docxOk = $false; pdfOk = $false; warning = $null }
+  if (-not $ExportDocx -and -not $ExportPdf) { return $result }
+
+  $word = $null
+  $doc = $null
+  try {
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $doc = $word.Documents.Open((Resolve-Path $HtmlPath).Path)
+    if ($ExportDocx) {
+      $doc.SaveAs((Resolve-Path (Split-Path -Parent $DocxPath)).Path + "\\" + (Split-Path -Leaf $DocxPath), 16)
+      $result.docxOk = $true
+    }
+    if ($ExportPdf) {
+      $doc.SaveAs((Resolve-Path (Split-Path -Parent $PdfPath)).Path + "\\" + (Split-Path -Leaf $PdfPath), 17)
+      $result.pdfOk = $true
+    }
+  }
+  catch {
+    $result.warning = "docx/pdf export skipped: " + $_.Exception.Message
+  }
+  finally {
+    if ($null -ne $doc) {
+      try { $doc.Close() } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($doc) } catch {}
+    }
+    if ($null -ne $word) {
+      try { $word.Quit() } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
+    }
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+  }
+
+  return $result
+}
 
 if (-not (Test-Path $InstancesPath)) {
   throw "Instances config not found: $InstancesPath"
@@ -98,6 +166,13 @@ foreach ($instance in $instancesConfig.instances) {
       OutputDir = $instanceOutput
     }
 
+    $instanceFormats = if ([string]::IsNullOrWhiteSpace([string]$instance.reportFormats)) { "json,html" } else { [string]$instance.reportFormats }
+    $normalizedInstanceFormats = Normalize-ReportFormats -ReportFormats $instanceFormats
+    if (-not ($normalizedInstanceFormats -contains "json")) {
+      $normalizedInstanceFormats.Add("json")
+    }
+    $invokeParams.ReportFormats = ($normalizedInstanceFormats -join ",")
+
     if (-not [string]::IsNullOrWhiteSpace([string]$instance.username)) {
       $invokeParams.Username = [string]$instance.username
       $invokeParams.Password = [string]$instance.password
@@ -176,10 +251,18 @@ $batchSummary = [ordered]@{
   instances = $sortedSummary
 }
 
-$summaryJsonPath = Join-Path $batchFolder "batch-summary.json"
-$summaryHtmlPath = Join-Path $batchFolder "batch-summary.html"
+$summaryBasePath = Join-Path $batchFolder "batch-summary"
+$summaryJsonPath = "$summaryBasePath.json"
+$summaryHtmlPath = "$summaryBasePath.html"
+$summaryMdPath = "$summaryBasePath.md"
+$summaryDocxPath = "$summaryBasePath.docx"
+$summaryPdfPath = "$summaryBasePath.pdf"
 
-$batchSummary | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $summaryJsonPath
+$summaryFormats = Normalize-ReportFormats -ReportFormats $SummaryFormats
+$summaryFormatSet = @{}
+foreach ($fmt in $summaryFormats) { $summaryFormatSet[$fmt] = $true }
+$generatedSummaryFiles = New-Object System.Collections.Generic.List[string]
+$summaryWarnings = New-Object System.Collections.Generic.List[string]
 
 $rank = 0
 $rows = $sortedSummary | ForEach-Object {
@@ -261,8 +344,67 @@ $html = @"
 </html>
 "@
 
-Set-Content -Encoding UTF8 -Path $summaryHtmlPath -Value $html
+$topRiskMdRows = $topRisks | ForEach-Object {
+  "| $($_.instance) | $($_.server) | $($_.overallStatus) | $($_.riskIndex) | $((@($_.criticalMetrics) -join ', ')) | $((@($_.suggestedActions) -join ' / ')) |"
+}
+if ($topRiskMdRows.Count -eq 0) {
+  $topRiskMdRows = @("| - | - | - | - | - | - |")
+}
+
+$rankingMdRows = $sortedSummary | ForEach-Object {
+  "| $($_.instance) | $($_.server) | $($_.overallStatus) | $($_.riskIndex) | $($_.healthScore) | $($_.critical) | $($_.warning) | $($_.probeErrors) |"
+}
+
+$md = @"
+# SQL-Server-Health-Sentinel Batch Summary
+
+- CollectedAt: $(Get-Date -Format "s")
+- Instances: $($sortedSummary.Count)
+- Policy: sorted_by_risk_desc
+
+## Top Risk Instances
+
+| Instance | Server | Status | RiskIndex | CriticalMetrics | SuggestedActions |
+| --- | --- | --- | --- | --- | --- |
+$($topRiskMdRows -join "`n")
+
+## Full Ranking
+
+| Instance | Server | Status | Risk | Score | Critical | Warning | ProbeErrors |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+$($rankingMdRows -join "`n")
+"@
+
+if ($summaryFormatSet.ContainsKey("json")) {
+  $batchSummary | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $summaryJsonPath
+  $generatedSummaryFiles.Add($summaryJsonPath)
+}
+
+$summaryHtmlNeeded = $summaryFormatSet.ContainsKey("html") -or $summaryFormatSet.ContainsKey("docx") -or $summaryFormatSet.ContainsKey("pdf")
+if ($summaryHtmlNeeded) {
+  Set-Content -Encoding UTF8 -Path $summaryHtmlPath -Value $html
+  if ($summaryFormatSet.ContainsKey("html")) {
+    $generatedSummaryFiles.Add($summaryHtmlPath)
+  }
+}
+
+if ($summaryFormatSet.ContainsKey("md")) {
+  Set-Content -Encoding UTF8 -Path $summaryMdPath -Value $md
+  $generatedSummaryFiles.Add($summaryMdPath)
+}
+
+if ($summaryFormatSet.ContainsKey("docx") -or $summaryFormatSet.ContainsKey("pdf")) {
+  $officeResult = Convert-HtmlToOffice -HtmlPath $summaryHtmlPath -DocxPath $summaryDocxPath -PdfPath $summaryPdfPath -ExportDocx $summaryFormatSet.ContainsKey("docx") -ExportPdf $summaryFormatSet.ContainsKey("pdf")
+  if ($officeResult.docxOk) { $generatedSummaryFiles.Add($summaryDocxPath) }
+  if ($officeResult.pdfOk) { $generatedSummaryFiles.Add($summaryPdfPath) }
+  if ($officeResult.warning) { $summaryWarnings.Add($officeResult.warning) }
+}
 
 Write-Output "Batch inspection complete."
-Write-Output "Summary JSON: $summaryJsonPath"
-Write-Output "Summary HTML: $summaryHtmlPath"
+Write-Output "Requested summary formats: $($summaryFormats -join ',')"
+foreach ($f in $generatedSummaryFiles) {
+  Write-Output "Generated: $f"
+}
+foreach ($w in $summaryWarnings) {
+  Write-Output "Warning: $w"
+}

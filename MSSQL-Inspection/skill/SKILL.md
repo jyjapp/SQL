@@ -43,6 +43,7 @@ Build a lightweight, pluggable SQL Server inspection skill that collects health 
 - Raw results persisted as JSON
 - Summary HTML with status cards
 - Batch summary with risk ranking and recommended actions
+- Configurable export formats: HTML, Markdown, DOCX, PDF, JSON
 
 ## 4. Data model
 

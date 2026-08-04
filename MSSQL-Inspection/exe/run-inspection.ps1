@@ -11,12 +11,90 @@ param(
   [string]$OdbcDriver = "ODBC Driver 18 for SQL Server",
   [bool]$EnableFallback = $true,
   [string]$FallbackTdsVersions = "7.4,7.3,7.2,7.1,7.0",
+  [string]$ReportFormats = "json,html",
   [string]$ThresholdPath = "..\\skill\\rules\\thresholds.json",
   [string]$OutputDir = ".\\output"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Normalize-ReportFormats {
+  param([string]$ReportFormats)
+
+  $allowed = @("json", "html", "md", "docx", "pdf")
+  $normalized = New-Object System.Collections.Generic.List[string]
+  foreach ($token in ($ReportFormats -split ',')) {
+    $fmt = $token.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($fmt)) {
+      continue
+    }
+    if ($allowed -contains $fmt -and -not $normalized.Contains($fmt)) {
+      $normalized.Add($fmt)
+    }
+  }
+
+  if ($normalized.Count -eq 0) {
+    $normalized.Add("json")
+    $normalized.Add("html")
+  }
+
+  return $normalized
+}
+
+function Convert-HtmlToOffice {
+  param(
+    [string]$HtmlPath,
+    [string]$DocxPath,
+    [string]$PdfPath,
+    [bool]$ExportDocx,
+    [bool]$ExportPdf
+  )
+
+  $result = [ordered]@{
+    docxOk = $false
+    pdfOk = $false
+    warning = $null
+  }
+
+  if (-not $ExportDocx -and -not $ExportPdf) {
+    return $result
+  }
+
+  $word = $null
+  $doc = $null
+  try {
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $doc = $word.Documents.Open((Resolve-Path $HtmlPath).Path)
+
+    if ($ExportDocx) {
+      $doc.SaveAs((Resolve-Path (Split-Path -Parent $DocxPath)).Path + "\\" + (Split-Path -Leaf $DocxPath), 16)
+      $result.docxOk = $true
+    }
+    if ($ExportPdf) {
+      $doc.SaveAs((Resolve-Path (Split-Path -Parent $PdfPath)).Path + "\\" + (Split-Path -Leaf $PdfPath), 17)
+      $result.pdfOk = $true
+    }
+  }
+  catch {
+    $result.warning = "docx/pdf export skipped: " + $_.Exception.Message
+  }
+  finally {
+    if ($null -ne $doc) {
+      try { $doc.Close() } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($doc) } catch {}
+    }
+    if ($null -ne $word) {
+      try { $word.Quit() } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
+    }
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+  }
+
+  return $result
+}
 
 function Convert-ToNumericOrNull {
   param([object]$Value)
@@ -819,10 +897,19 @@ OPTION (RECOMPILE);
     }
   }
 
-  $jsonPath = Join-Path $OutputDir ("inspection-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
-  $htmlPath = [System.IO.Path]::ChangeExtension($jsonPath, ".html")
+  $basePath = Join-Path $OutputDir ("inspection-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+  $jsonPath = "$basePath.json"
+  $htmlPath = "$basePath.html"
+  $mdPath = "$basePath.md"
+  $docxPath = "$basePath.docx"
+  $pdfPath = "$basePath.pdf"
 
-  $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $jsonPath
+  $selectedFormats = Normalize-ReportFormats -ReportFormats $ReportFormats
+  $formatSet = @{}
+  foreach ($fmt in $selectedFormats) { $formatSet[$fmt] = $true }
+
+  $generatedFiles = New-Object System.Collections.Generic.List[string]
+  $outputWarnings = New-Object System.Collections.Generic.List[string]
 
   $rows = $metrics | ForEach-Object {
     $statusClass = Get-StatusBadgeClass -Status $_.status
@@ -998,11 +1085,78 @@ OPTION (RECOMPILE);
 </html>
 "@
 
-  Set-Content -Encoding UTF8 -Path $htmlPath -Value $html
+  $metricsMdRows = $metrics | ForEach-Object {
+    "| $($_.metricKey) | $($_.category) | $($_.value) | $($_.unit) | $($_.status) |"
+  }
+  $criticalMetricList = @($metrics | Where-Object { $_.status -eq "Critical" } | ForEach-Object { $_.metricKey })
+  if ($criticalMetricList.Count -eq 0) {
+    $criticalMetricList = @("None")
+  }
 
-  Write-Output "Inspection complete."
-  Write-Output "JSON: $jsonPath"
-  Write-Output "HTML: $htmlPath"
+  $md = @"
+# SQL-Server-Health-Sentinel Report
+
+- Server: $Server
+- Database: $Database
+- CollectedAt: $(Get-Date -Format "s")
+- OverallStatus: $overallStatus
+- HealthScore: $healthScore
+- ActiveProvider: $activeProvider
+- ActiveTdsVersion: $(if ([string]::IsNullOrWhiteSpace([string]$activeTdsVersion)) { "auto" } else { $activeTdsVersion })
+
+## Summary
+
+| Item | Value |
+| --- | --- |
+| Critical | $criticalCount |
+| Warning | $warningCount |
+| Good | $goodCount |
+| ProbeErrors | $($probeErrors.Count) |
+
+## Critical Metrics
+
+$($criticalMetricList -join ", ")
+
+## Metrics
+
+| Metric | Category | Value | Unit | Status |
+| --- | --- | --- | --- | --- |
+$($metricsMdRows -join "`n")
+"@
+
+if ($formatSet.ContainsKey("json")) {
+  $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $jsonPath
+  $generatedFiles.Add($jsonPath)
+}
+
+$htmlNeeded = $formatSet.ContainsKey("html") -or $formatSet.ContainsKey("docx") -or $formatSet.ContainsKey("pdf")
+if ($htmlNeeded) {
+  Set-Content -Encoding UTF8 -Path $htmlPath -Value $html
+  if ($formatSet.ContainsKey("html")) {
+    $generatedFiles.Add($htmlPath)
+  }
+}
+
+if ($formatSet.ContainsKey("md")) {
+  Set-Content -Encoding UTF8 -Path $mdPath -Value $md
+  $generatedFiles.Add($mdPath)
+}
+
+if ($formatSet.ContainsKey("docx") -or $formatSet.ContainsKey("pdf")) {
+  $officeResult = Convert-HtmlToOffice -HtmlPath $htmlPath -DocxPath $docxPath -PdfPath $pdfPath -ExportDocx $formatSet.ContainsKey("docx") -ExportPdf $formatSet.ContainsKey("pdf")
+  if ($officeResult.docxOk) { $generatedFiles.Add($docxPath) }
+  if ($officeResult.pdfOk) { $generatedFiles.Add($pdfPath) }
+  if ($officeResult.warning) { $outputWarnings.Add($officeResult.warning) }
+}
+
+Write-Output "Inspection complete."
+Write-Output "Requested formats: $($selectedFormats -join ',')"
+foreach ($f in $generatedFiles) {
+  Write-Output "Generated: $f"
+}
+foreach ($w in $outputWarnings) {
+  Write-Output "Warning: $w"
+}
 }
 finally {
   if ($null -ne $conn) {

@@ -16,6 +16,9 @@
    - .\\run-inspection.ps1 -Server 10.0.0.55 -Database master -Username sa -Password "your_password" -ConnectionProvider Odbc -TdsVersion 7.1
 5. Run with automatic fallback (recommended for mixed-version estates):
    - .\\run-inspection.ps1 -Server 10.0.0.55 -Database master -Username sa -Password "your_password" -ConnectionProvider SqlClient -EnableFallback $true -FallbackTdsVersions "7.4,7.3,7.2,7.1,7.0"
+6. Choose report formats:
+   - .\\run-inspection.ps1 -Server 10.0.0.10 -ReportFormats "json,html,md"
+   - .\\run-inspection.ps1 -Server 10.0.0.10 -ReportFormats "json,pdf"
 
 ## Output
 
@@ -27,10 +30,19 @@
 1. Edit instances.example.json and add multiple servers.
 2. Run:
    - .\\run-batch-inspection.ps1 -InstancesPath .\\instances.example.json
+   - .\\run-batch-inspection.ps1 -InstancesPath .\\instances.example.json -SummaryFormats "json,html,md"
 3. Review batch output:
    - .\\output\\batch-<timestamp>\\batch-summary.json
    - .\\output\\batch-<timestamp>\\batch-summary.html
    - Includes risk ranking, top-risk list, and suggested remediation actions
+
+## Report formats
+
+- Supported formats: json, html, md, docx, pdf
+- Single-run: use -ReportFormats
+- Batch summary: use -SummaryFormats
+- Per-instance output: set reportFormats in instances.example.json
+- docx/pdf export requires Microsoft Word on Windows (COM automation)
 
 ## Key checks in current version
 
