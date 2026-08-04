@@ -123,3 +123,71 @@ WHERE is_local = 1
   AND role_desc = 'PRIMARY'
   AND synchronization_health_desc <> 'HEALTHY'
 OPTION (RECOMPILE);
+
+/* 9) Sysadmin principal count */
+SELECT
+  COUNT(1) AS sysadmin_login_count
+FROM sys.server_role_members srm WITH (NOLOCK)
+INNER JOIN sys.server_principals r WITH (NOLOCK) ON r.principal_id = srm.role_principal_id
+WHERE r.name = 'sysadmin'
+OPTION (RECOMPILE);
+
+/* 10) Weak-policy SQL login count */
+SELECT
+  COUNT(1) AS weak_policy_logins_count
+FROM sys.sql_logins WITH (NOLOCK)
+WHERE is_disabled = 0
+  AND (is_policy_checked = 0 OR is_expiration_checked = 0)
+OPTION (RECOMPILE);
+
+/* 11) New server logins in last 90 days */
+SELECT
+  COUNT(1) AS new_logins_90d_count
+FROM sys.server_principals WITH (NOLOCK)
+WHERE type IN ('S', 'U', 'G')
+  AND create_date >= DATEADD(DAY, -90, GETDATE())
+  AND name NOT LIKE '##%'
+OPTION (RECOMPILE);
+
+/* 12) New database users in last 90 days */
+CREATE TABLE #recent_users (
+  database_name SYSNAME,
+  user_name SYSNAME,
+  type_desc NVARCHAR(60),
+  create_date DATETIME
+);
+
+DECLARE @db SYSNAME;
+DECLARE @sql NVARCHAR(MAX);
+DECLARE db_cur CURSOR LOCAL FAST_FORWARD FOR
+SELECT name
+FROM sys.databases WITH (NOLOCK)
+WHERE state_desc = 'ONLINE'
+  AND database_id > 4;
+
+OPEN db_cur;
+FETCH NEXT FROM db_cur INTO @db;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+  SET @sql = N'
+  BEGIN TRY
+    INSERT INTO #recent_users(database_name, user_name, type_desc, create_date)
+    SELECT N''' + REPLACE(@db, '''', '''''') + ''', name, type_desc, create_date
+    FROM ' + QUOTENAME(@db) + '.sys.database_principals WITH (NOLOCK)
+    WHERE type IN (''S'', ''U'', ''G'')
+      AND principal_id > 4
+      AND create_date >= DATEADD(DAY, -90, GETDATE());
+  END TRY
+  BEGIN CATCH
+  END CATCH;';
+
+  EXEC sys.sp_executesql @sql;
+  FETCH NEXT FROM db_cur INTO @db;
+END
+
+CLOSE db_cur;
+DEALLOCATE db_cur;
+
+SELECT COUNT(1) AS new_db_users_90d_count
+FROM #recent_users
+OPTION (RECOMPILE);

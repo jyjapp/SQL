@@ -26,6 +26,7 @@
 3. Review batch output:
    - .\\output\\batch-<timestamp>\\batch-summary.json
    - .\\output\\batch-<timestamp>\\batch-summary.html
+   - Includes risk ranking, top-risk list, and suggested remediation actions
 
 ## Key checks in current version
 
@@ -36,6 +37,9 @@
 - Log usage and data file volume usage
 - Failed jobs and disabled jobs
 - AG unhealthy replicas (if AG enabled)
+- Sysadmin membership count and detail
+- Weak-policy SQL logins
+- New server logins and database users in last 90 days
 
 ## Notes
 

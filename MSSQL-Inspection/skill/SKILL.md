@@ -40,6 +40,7 @@ Build a lightweight, pluggable SQL Server inspection skill that collects health 
 
 - Raw results persisted as JSON
 - Summary HTML with status cards
+- Batch summary with risk ranking and recommended actions
 
 ## 4. Data model
 
@@ -64,5 +65,5 @@ Each metric output should include:
 ## 6. Roadmap
 
 - Phase 1 (MVP): single instance, JSON + base HTML report
-- Phase 2: batch mode, security deep checks, Excel summary
+- Phase 2: batch mode, security deep checks, risk ranking summary
 - Phase 3: REST API service, scheduling, alert integrations

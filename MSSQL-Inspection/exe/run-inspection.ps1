@@ -333,6 +333,79 @@ OPTION (RECOMPILE);
 "@
   $metrics.Add((New-Metric -MetricKey "ag_unhealthy_replicas" -Category "high_availability" -Value $agUnhealthyReplicas -Unit "count" -Rule $ruleMap["ag_unhealthy_replicas"] -SourceProbe "dm_hadr_availability_replica_states"))
 
+  $sysadminLoginCount = Invoke-SafeScalarProbe -Connection $conn -ProbeName "sysadmin_login_count" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT COUNT(1)
+FROM sys.server_role_members srm WITH (NOLOCK)
+INNER JOIN sys.server_principals r WITH (NOLOCK) ON r.principal_id = srm.role_principal_id
+WHERE r.name = 'sysadmin'
+OPTION (RECOMPILE);
+"@
+  $metrics.Add((New-Metric -MetricKey "sysadmin_login_count" -Category "security_audit" -Value $sysadminLoginCount -Unit "count" -Rule $ruleMap["sysadmin_login_count"] -SourceProbe "sys.server_role_members"))
+
+  $weakPolicyLogins = Invoke-SafeScalarProbe -Connection $conn -ProbeName "weak_policy_logins_count" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT COUNT(1)
+FROM sys.sql_logins WITH (NOLOCK)
+WHERE is_disabled = 0
+  AND (is_policy_checked = 0 OR is_expiration_checked = 0)
+OPTION (RECOMPILE);
+"@
+  $metrics.Add((New-Metric -MetricKey "weak_policy_logins_count" -Category "security_audit" -Value $weakPolicyLogins -Unit "count" -Rule $ruleMap["weak_policy_logins_count"] -SourceProbe "sys.sql_logins"))
+
+  $newLogins90d = Invoke-SafeScalarProbe -Connection $conn -ProbeName "new_logins_90d_count" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT COUNT(1)
+FROM sys.server_principals WITH (NOLOCK)
+WHERE type IN ('S', 'U', 'G')
+  AND create_date >= DATEADD(DAY, -90, GETDATE())
+  AND name NOT LIKE '##%'
+OPTION (RECOMPILE);
+"@
+  $metrics.Add((New-Metric -MetricKey "new_logins_90d_count" -Category "security_audit" -Value $newLogins90d -Unit "count" -Rule $ruleMap["new_logins_90d_count"] -SourceProbe "sys.server_principals"))
+
+  $newDbUsers90d = Invoke-SafeScalarProbe -Connection $conn -ProbeName "new_db_users_90d_count" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+CREATE TABLE #recent_users (
+  database_name SYSNAME,
+  user_name SYSNAME,
+  type_desc NVARCHAR(60),
+  create_date DATETIME
+);
+
+DECLARE @db SYSNAME;
+DECLARE @sql NVARCHAR(MAX);
+DECLARE db_cur CURSOR LOCAL FAST_FORWARD FOR
+SELECT name
+FROM sys.databases WITH (NOLOCK)
+WHERE state_desc = 'ONLINE'
+  AND database_id > 4;
+
+OPEN db_cur;
+FETCH NEXT FROM db_cur INTO @db;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+  SET @sql = N'
+  BEGIN TRY
+    INSERT INTO #recent_users(database_name, user_name, type_desc, create_date)
+    SELECT N''' + REPLACE(@db, '''', '''''') + ''', name, type_desc, create_date
+    FROM ' + QUOTENAME(@db) + '.sys.database_principals WITH (NOLOCK)
+    WHERE type IN (''S'', ''U'', ''G'')
+      AND principal_id > 4
+      AND create_date >= DATEADD(DAY, -90, GETDATE());
+  END TRY
+  BEGIN CATCH
+  END CATCH;';
+
+  EXEC sys.sp_executesql @sql;
+  FETCH NEXT FROM db_cur INTO @db;
+END
+
+CLOSE db_cur;
+DEALLOCATE db_cur;
+
+SELECT COUNT(1)
+FROM #recent_users
+OPTION (RECOMPILE);
+"@
+  $metrics.Add((New-Metric -MetricKey "new_db_users_90d_count" -Category "security_audit" -Value $newDbUsers90d -Unit "count" -Rule $ruleMap["new_db_users_90d_count"] -SourceProbe "sys.database_principals"))
+
   $failedJobsDetails = Invoke-SafeTableProbe -Connection $conn -ProbeName "failed_jobs_details_24h" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
 SELECT TOP (20)
   j.name AS job_name,
@@ -379,6 +452,97 @@ ORDER BY backup_age_hours DESC
 OPTION (RECOMPILE);
 "@
 
+  $sysadminLoginDetails = Invoke-SafeTableProbe -Connection $conn -ProbeName "sysadmin_login_details" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT
+  p.name,
+  p.type_desc,
+  p.is_disabled,
+  p.create_date
+FROM sys.server_role_members srm WITH (NOLOCK)
+INNER JOIN sys.server_principals r WITH (NOLOCK) ON r.principal_id = srm.role_principal_id
+INNER JOIN sys.server_principals p WITH (NOLOCK) ON p.principal_id = srm.member_principal_id
+WHERE r.name = 'sysadmin'
+ORDER BY p.name
+OPTION (RECOMPILE);
+"@
+
+  $weakPolicyLoginDetails = Invoke-SafeTableProbe -Connection $conn -ProbeName "weak_policy_login_details" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT TOP (50)
+  name,
+  is_policy_checked,
+  is_expiration_checked,
+  create_date,
+  modify_date
+FROM sys.sql_logins WITH (NOLOCK)
+WHERE is_disabled = 0
+  AND (is_policy_checked = 0 OR is_expiration_checked = 0)
+ORDER BY create_date DESC
+OPTION (RECOMPILE);
+"@
+
+  $recentLoginsDetails = Invoke-SafeTableProbe -Connection $conn -ProbeName "recent_logins_90d_details" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+SELECT TOP (50)
+  name,
+  type_desc,
+  create_date,
+  default_database_name
+FROM sys.server_principals WITH (NOLOCK)
+WHERE type IN ('S', 'U', 'G')
+  AND create_date >= DATEADD(DAY, -90, GETDATE())
+  AND name NOT LIKE '##%'
+ORDER BY create_date DESC
+OPTION (RECOMPILE);
+"@
+
+  $recentDbUsersDetails = Invoke-SafeTableProbe -Connection $conn -ProbeName "recent_db_users_90d_details" -TimeoutSeconds $TimeoutSeconds -Errors $probeErrors -Sql @"
+CREATE TABLE #recent_users (
+  database_name SYSNAME,
+  user_name SYSNAME,
+  type_desc NVARCHAR(60),
+  create_date DATETIME
+);
+
+DECLARE @db SYSNAME;
+DECLARE @sql NVARCHAR(MAX);
+DECLARE db_cur CURSOR LOCAL FAST_FORWARD FOR
+SELECT name
+FROM sys.databases WITH (NOLOCK)
+WHERE state_desc = 'ONLINE'
+  AND database_id > 4;
+
+OPEN db_cur;
+FETCH NEXT FROM db_cur INTO @db;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+  SET @sql = N'
+  BEGIN TRY
+    INSERT INTO #recent_users(database_name, user_name, type_desc, create_date)
+    SELECT N''' + REPLACE(@db, '''', '''''') + ''', name, type_desc, create_date
+    FROM ' + QUOTENAME(@db) + '.sys.database_principals WITH (NOLOCK)
+    WHERE type IN (''S'', ''U'', ''G'')
+      AND principal_id > 4
+      AND create_date >= DATEADD(DAY, -90, GETDATE());
+  END TRY
+  BEGIN CATCH
+  END CATCH;';
+
+  EXEC sys.sp_executesql @sql;
+  FETCH NEXT FROM db_cur INTO @db;
+END
+
+CLOSE db_cur;
+DEALLOCATE db_cur;
+
+SELECT TOP (50)
+  database_name,
+  user_name,
+  type_desc,
+  create_date
+FROM #recent_users
+ORDER BY create_date DESC
+OPTION (RECOMPILE);
+"@
+
   $criticalCount = ($metrics | Where-Object { $_.status -eq "Critical" }).Count
   $warningCount = ($metrics | Where-Object { $_.status -eq "Warning" }).Count
   $goodCount = ($metrics | Where-Object { $_.status -eq "Good" }).Count
@@ -422,6 +586,47 @@ OPTION (RECOMPILE);
     }
   }
 
+  $sysadminDetailRows = @()
+  foreach ($row in $sysadminLoginDetails.Rows) {
+    $sysadminDetailRows += [ordered]@{
+      name = [string]$row["name"]
+      type_desc = [string]$row["type_desc"]
+      is_disabled = [string]$row["is_disabled"]
+      create_date = [string]$row["create_date"]
+    }
+  }
+
+  $weakPolicyDetailRows = @()
+  foreach ($row in $weakPolicyLoginDetails.Rows) {
+    $weakPolicyDetailRows += [ordered]@{
+      name = [string]$row["name"]
+      is_policy_checked = [string]$row["is_policy_checked"]
+      is_expiration_checked = [string]$row["is_expiration_checked"]
+      create_date = [string]$row["create_date"]
+      modify_date = [string]$row["modify_date"]
+    }
+  }
+
+  $recentLoginsDetailRows = @()
+  foreach ($row in $recentLoginsDetails.Rows) {
+    $recentLoginsDetailRows += [ordered]@{
+      name = [string]$row["name"]
+      type_desc = [string]$row["type_desc"]
+      create_date = [string]$row["create_date"]
+      default_database_name = [string]$row["default_database_name"]
+    }
+  }
+
+  $recentDbUsersDetailRows = @()
+  foreach ($row in $recentDbUsersDetails.Rows) {
+    $recentDbUsersDetailRows += [ordered]@{
+      database_name = [string]$row["database_name"]
+      user_name = [string]$row["user_name"]
+      type_desc = [string]$row["type_desc"]
+      create_date = [string]$row["create_date"]
+    }
+  }
+
   $result = [ordered]@{
     project = "SQL-Server-Health-Sentinel"
     server = $Server
@@ -440,6 +645,10 @@ OPTION (RECOMPILE);
       longRunningQueriesTop5 = $longRunningDetailRows
       failedJobs24h = $failedJobsDetailRows
       backupAgeByDatabase = $backupAgeDetailRows
+      sysadminLogins = $sysadminDetailRows
+      weakPolicyLogins = $weakPolicyDetailRows
+      recentLogins90d = $recentLoginsDetailRows
+      recentDbUsers90d = $recentDbUsersDetailRows
       probeErrors = $probeErrors
     }
   }
@@ -468,6 +677,31 @@ OPTION (RECOMPILE);
 
   if ($jobRows.Count -eq 0) {
     $jobRows = @("<tr><td colspan='3'>No failed jobs in last 24h.</td></tr>")
+  }
+  
+  $sysadminRows = $sysadminDetailRows | ForEach-Object {
+    "<tr><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.is_disabled)</td><td>$(Escape-Html -Text $_.create_date)</td></tr>"
+  }
+  if ($sysadminRows.Count -eq 0) {
+    $sysadminRows = @("<tr><td colspan='4'>No sysadmin principals found.</td></tr>")
+  }
+  
+  $weakPolicyRows = $weakPolicyDetailRows | ForEach-Object {
+    "<tr><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.is_policy_checked)</td><td>$(Escape-Html -Text $_.is_expiration_checked)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.modify_date)</td></tr>"
+  }
+  if ($weakPolicyRows.Count -eq 0) {
+    $weakPolicyRows = @("<tr><td colspan='5'>No weak-policy SQL logins detected.</td></tr>")
+  }
+  
+  $recentIdentityRows = $recentLoginsDetailRows | ForEach-Object {
+    "<tr><td>Server Login</td><td>$(Escape-Html -Text $_.name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.default_database_name)</td></tr>"
+  }
+  $recentDbIdentityRows = $recentDbUsersDetailRows | ForEach-Object {
+    "<tr><td>DB User</td><td>$(Escape-Html -Text $_.user_name)</td><td>$(Escape-Html -Text $_.type_desc)</td><td>$(Escape-Html -Text $_.create_date)</td><td>$(Escape-Html -Text $_.database_name)</td></tr>"
+  }
+  $recentIdentityRows = @($recentIdentityRows) + @($recentDbIdentityRows)
+  if ($recentIdentityRows.Count -eq 0) {
+    $recentIdentityRows = @("<tr><td colspan='5'>No new logins/users in last 90 days.</td></tr>")
   }
 
   $overallBadgeClass = Get-StatusBadgeClass -Status $overallStatus
@@ -529,6 +763,42 @@ OPTION (RECOMPILE);
       </thead>
       <tbody>
         $($rows -join "`n")
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="panel">
+    <h2>Security Audit: Sysadmin Principals</h2>
+    <table>
+      <thead>
+        <tr><th>Principal</th><th>Type</th><th>Disabled</th><th>Create Time</th></tr>
+      </thead>
+      <tbody>
+        $($sysadminRows -join "`n")
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="panel">
+    <h2>Security Audit: Weak Policy SQL Logins</h2>
+    <table>
+      <thead>
+        <tr><th>Login</th><th>Password Policy</th><th>Expiration Policy</th><th>Create Time</th><th>Modify Time</th></tr>
+      </thead>
+      <tbody>
+        $($weakPolicyRows -join "`n")
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="panel">
+    <h2>Security Audit: New Identities in Last 90 Days</h2>
+    <table>
+      <thead>
+        <tr><th>Scope</th><th>Name</th><th>Type</th><th>Create Time</th><th>Database</th></tr>
+      </thead>
+      <tbody>
+        $($recentIdentityRows -join "`n")
       </tbody>
     </table>
   </div>
