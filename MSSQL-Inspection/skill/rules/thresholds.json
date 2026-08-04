@@ -38,11 +38,41 @@
       "unit": "count",
       "description": "Current blocking sessions"
     },
+    "longest_running_query_seconds": {
+      "warningAbove": 120,
+      "criticalAbove": 300,
+      "unit": "seconds",
+      "description": "Longest currently running request"
+    },
+    "deadlocks_24h": {
+      "warningAbove": 0,
+      "criticalAbove": 3,
+      "unit": "count",
+      "description": "Deadlock events from system_health in last 24h"
+    },
     "last_full_backup_age_hours": {
       "warningAbove": 48,
       "criticalAbove": 72,
       "unit": "hours",
       "description": "Hours since last full backup"
+    },
+    "databases_without_recent_full_backup": {
+      "warningAbove": 0,
+      "criticalAbove": 2,
+      "unit": "count",
+      "description": "User databases without full backup in last 72h"
+    },
+    "disabled_jobs_count": {
+      "warningAbove": 0,
+      "criticalAbove": 5,
+      "unit": "count",
+      "description": "Disabled SQL Agent jobs"
+    },
+    "ag_unhealthy_replicas": {
+      "warningAbove": 0,
+      "criticalAbove": 0,
+      "unit": "count",
+      "description": "AG replicas with unhealthy sync state on local primary"
     }
   }
 }
