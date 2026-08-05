@@ -1,0 +1,8 @@
+﻿[global]
+language	zh-CN
+reportFormats	json,html
+
+[servers]
+ip	port	username	password
+db-host.example.com	1433		
+

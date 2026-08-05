@@ -2,7 +2,7 @@
   "instances": [
     {
       "name": "prod-sql-01",
-      "server": "127.0.0.1",
+      "server": "db-host.example.com",
       "database": "master",
       "authMode": "Windows",
       "connectionProvider": "SqlClient",
@@ -18,7 +18,7 @@
     },
     {
       "name": "prod-sql-02",
-      "server": "10.0.0.25",
+      "server": "db-host-2.example.com",
       "database": "master",
       "authMode": "SqlAuth",
       "connectionProvider": "Odbc",
@@ -27,14 +27,14 @@
       "enableFallback": true,
       "fallbackTdsVersions": "7.3,7.2,7.1,7.0",
       "reportFormats": "json,html,pdf",
-      "username": "sa",
-      "password": "CHANGE_ME",
+      "username": "sql_user",
+      "password": "<PASSWORD>",
       "port": 1433,
       "timeoutSeconds": 15
     },
     {
       "name": "legacy-sql-2008r2",
-      "server": "10.0.0.55",
+      "server": "legacy-db.example.com",
       "database": "master",
       "authMode": "SqlAuth",
       "connectionProvider": "Odbc",
@@ -43,8 +43,8 @@
       "enableFallback": true,
       "fallbackTdsVersions": "7.1,7.0",
       "reportFormats": "json,md",
-      "username": "sa",
-      "password": "CHANGE_ME",
+      "username": "sql_user",
+      "password": "<PASSWORD>",
       "port": 1433,
       "timeoutSeconds": 20
     }

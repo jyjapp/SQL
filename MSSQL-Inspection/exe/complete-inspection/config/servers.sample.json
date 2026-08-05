@@ -1,0 +1,4 @@
+{
+  "deprecated": true,
+  "message": "Use servers.sample.tsv and servers.config with [global]/[servers] sections and tab-separated server rows."
+}

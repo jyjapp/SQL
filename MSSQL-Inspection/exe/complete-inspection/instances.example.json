@@ -1,0 +1,12 @@
+{
+  "instances": [
+    {
+      "name": "sample-sql-01",
+      "server": "db-host.example.com",
+      "database": "master",
+      "port": 1433,
+      "connectionProvider": "SqlClient",
+      "reportFormats": "json,html"
+    }
+  ]
+}

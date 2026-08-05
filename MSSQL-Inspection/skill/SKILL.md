@@ -44,6 +44,9 @@ Build a lightweight, pluggable SQL Server inspection skill that collects health 
 - Summary HTML with status cards
 - Batch summary with risk ranking and recommended actions
 - Configurable export formats: HTML, Markdown, DOCX, PDF, JSON
+- Output location config in `skill/config.json` (default root, prompt mode, date subfolder policy)
+- Interactive folder selection when output path is not explicitly provided at runtime
+- Optional persistence of selected output root as next-run default
 
 ## 4. Data model
 

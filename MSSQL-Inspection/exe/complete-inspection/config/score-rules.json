@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "weights": {
+    "diskCriticalPerVolume": 15,
+    "diskWarningPerVolume": 5,
+    "fullBackupCriticalPerDatabase": 10,
+    "fullBackupWarningPerDatabase": 5,
+    "highFragmentedIndexPerItem": 1,
+    "highFragmentedIndexMax": 10,
+    "missingIndexPerItem": 1,
+    "missingIndexMax": 5,
+    "failedJobsPenalty": 5,
+    "orphanedUsersPenalty": 3,
+    "alwaysOnIssuePenalty": 10,
+    "longRunningQueryPenalty": 5
+  },
+  "backupThresholdHours": {
+    "fullWarning": 48,
+    "fullCritical": 168,
+    "diffWarning": 24,
+    "diffCritical": 72,
+    "logWarning": 4,
+    "logCritical": 24
+  },
+  "diskThresholdPercent": {
+    "warningBelow": 20,
+    "criticalBelow": 10
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "output": {
+    "defaultRootDir": "D:\\download\\SQL",
+    "promptForFolder": true,
+    "rememberSelectedRootAsDefault": true,
+    "useDateSubfolder": true,
+    "dateFolderFormat": "yyyyMMdd"
+  },
+  "report": {
+    "language": "en-US",
+    "localizeJsonStatus": false
+  }
+}
